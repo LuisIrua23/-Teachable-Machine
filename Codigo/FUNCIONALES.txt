@@ -1,0 +1,723 @@
+﻿<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Juego con Pose y TensorFlow</title>
+    <style>
+        body { text-align: center; font-family: Arial; }
+        canvas { display: block; margin: auto; }
+        #car { 
+            width: 100px; height: 50px; 
+            background: red; 
+            position: absolute; 
+            bottom: 100px; 
+            left: 50%; 
+            transform: translateX(-50%);
+            border-radius: 10px;
+        }
+    </style>
+</head>
+<body>
+    <h2>Controla el carrito con tu cuerpo 🏎️</h2>
+    <button onclick="init()">Comenzar</button>
+    <div><canvas id="canvas"></canvas></div>
+    <div id="label-container"></div>
+    <div id="car"></div>
+
+    <!-- TensorFlow y Teachable Machine -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@1.3.1/dist/tf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/pose@0.8/dist/teachablemachine-pose.min.js"></script>
+
+    <script>
+        const URL = "./my-pose-model/";
+        let model, webcam, ctx, labelContainer, maxPredictions;
+        let car = document.getElementById("car");
+        let carPosition = 50; // en porcentaje
+
+        async function init() {
+            const modelURL = URL + "model.json";
+            const metadataURL = URL + "metadata.json";
+
+            model = await tmPose.load(modelURL, metadataURL);
+            maxPredictions = model.getTotalClasses();
+
+            const size = 300;
+            webcam = new tmPose.Webcam(size, size, true);
+            await webcam.setup();
+            await webcam.play();
+            window.requestAnimationFrame(loop);
+
+            const canvas = document.getElementById("canvas");
+            canvas.width = size; canvas.height = size;
+            ctx = canvas.getContext("2d");
+
+            labelContainer = document.getElementById("label-container");
+            for (let i = 0; i < maxPredictions; i++) {
+                labelContainer.appendChild(document.createElement("div"));
+            }
+        }
+
+        async function loop(timestamp) {
+            webcam.update();
+            await predict();
+            window.requestAnimationFrame(loop);
+        }
+
+        async function predict() {
+            const { pose, posenetOutput } = await model.estimatePose(webcam.canvas);
+            const prediction = await model.predict(posenetOutput);
+
+            let bestClass = "";
+            let bestProb = 0;
+
+            for (let i = 0; i < maxPredictions; i++) {
+                const classPrediction =
+                    prediction[i].className + ": " + prediction[i].probability.toFixed(2);
+                labelContainer.childNodes[i].innerHTML = classPrediction;
+
+                if (prediction[i].probability > bestProb) {
+                    bestProb = prediction[i].probability;
+                    bestClass = prediction[i].className;
+                }
+            }
+
+            moverCarrito(bestClass);
+            drawPose(pose);
+        }
+
+        function moverCarrito(clase) {
+    if (clase === "Izquierda" && carPosition > 0) {
+    carPosition -= 2;
+    } else if (clase === "Derecha" && carPosition < 100) {
+    carPosition += 2;
+    }
+
+
+    car.style.left = carPosition + "%";
+}
+
+
+
+        function drawPose(pose) {
+            if (webcam.canvas) {
+                ctx.drawImage(webcam.canvas, 0, 0);
+                if (pose) {
+                    const minPartConfidence = 0.5;
+                    tmPose.drawKeypoints(pose.keypoints, minPartConfidence, ctx);
+                    tmPose.drawSkeleton(pose.keypoints, minPartConfidence, ctx);
+                }
+            }
+        }
+    </script>
+</body>
+</html>
+
+
+
+
+
+
+
+
+
+
+
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8" />
+    <title>Carrito con Poses + Imagen</title>
+    <style>
+        body {
+            text-align: center;
+            font-family: Arial;
+            background: #f0f0f0;
+        }
+
+        canvas,
+        video {
+            display: block;
+            margin: auto;
+        }
+
+        #car {
+            width: 100px;
+            height: 50px;
+            background: green;
+            position: absolute;
+            bottom: 100px;
+            left: 50%;
+            transform: translateX(-50%);
+            border-radius: 10px;
+            z-index: 10;
+            transition: background 0.3s ease;
+        }
+
+        #estado-carro {
+            font-size: 20px;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+
+<body>
+    <h2>Controla el carrito con tu cuerpo 🏎️ y detenlo con una imagen 🖼️</h2>
+    <button onclick="init()">Comenzar</button>
+
+    <div>
+        <canvas id="canvas"></canvas>
+        <div id="car"></div>
+        <div id="estado-carro">Estado: 🟢 En movimiento</div>
+    </div>
+
+    <h3>Reconocimiento de Pose (izquierda / derecha)</h3>
+    <div id="pose-labels"></div>
+
+    <h3>Reconocimiento de Imagen (detener imagen)</h3>
+    <div id="webcam-container"></div>
+    <div id="image-labels"></div>
+
+    <!-- TensorFlow y Teachable Machine -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@1.3.1/dist/tf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/pose@0.8/dist/teachablemachine-pose.min.js"></script>
+    <script
+        src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@latest/dist/teachablemachine-image.min.js"></script>
+
+    <script>
+        const poseURL = "./my-pose-model/";
+        const imageURL = "./tm-my-image-model2/";
+
+        let poseModel, poseWebcam, poseCtx, poseLabelContainer, maxPoseClasses;
+        let imageModel, imageWebcam, imageLabelContainer, maxImageClasses;
+
+        let car = document.getElementById("car");
+        let carPosition = 50;
+        let detenerCarro = false;
+        let estadoCarroTexto = document.getElementById("estado-carro");
+
+        async function init() {
+            await initImageModel();
+            await initPoseModel();
+        }
+
+        // MODELO DE IMAGEN
+        async function initImageModel() {
+            const modelURL = imageURL + "model.json";
+            const metadataURL = imageURL + "metadata.json";
+            imageModel = await tmImage.load(modelURL, metadataURL);
+            maxImageClasses = imageModel.getTotalClasses();
+
+            const flip = true;
+            imageWebcam = new tmImage.Webcam(200, 200, flip);
+            await imageWebcam.setup();
+            await imageWebcam.play();
+            window.requestAnimationFrame(imageLoop);
+
+            document.getElementById("webcam-container").appendChild(imageWebcam.canvas);
+            imageLabelContainer = document.getElementById("image-labels");
+            for (let i = 0; i < maxImageClasses; i++) {
+                imageLabelContainer.appendChild(document.createElement("div"));
+            }
+        }
+
+        async function imageLoop() {
+            imageWebcam.update();
+            await predictImage();
+            window.requestAnimationFrame(imageLoop);
+        }
+
+        async function predictImage() {
+            const prediction = await imageModel.predict(imageWebcam.canvas);
+            for (let i = 0; i < maxImageClasses; i++) {
+                const classPrediction =
+                    prediction[i].className + ": " + prediction[i].probability.toFixed(2);
+                imageLabelContainer.childNodes[i].innerText = classPrediction;
+
+                if (prediction[i].className === "Detener" && prediction[i].probability > 0.75) {
+                    detenerCarro = true;
+                    car.style.background = "red";
+                    estadoCarroTexto.innerText = "Estado: 🔴 Detenido por imagen";
+                }
+                if (prediction[i].className === "Nada" && prediction[i].probability > 0.75) {
+                    detenerCarro = false;
+                    car.style.background = "green";
+                    estadoCarroTexto.innerText = "Estado: 🟢 En movimiento";
+                }
+            }
+        }
+
+        // MODELO DE POSE
+        async function initPoseModel() {
+            const modelURL = poseURL + "model.json";
+            const metadataURL = poseURL + "metadata.json";
+
+            poseModel = await tmPose.load(modelURL, metadataURL);
+            maxPoseClasses = poseModel.getTotalClasses();
+
+            const size = 300;
+            poseWebcam = new tmPose.Webcam(size, size, true);
+            await poseWebcam.setup();
+            await poseWebcam.play();
+            window.requestAnimationFrame(poseLoop);
+
+            const canvas = document.getElementById("canvas");
+            canvas.width = size;
+            canvas.height = size;
+            poseCtx = canvas.getContext("2d");
+
+            poseLabelContainer = document.getElementById("pose-labels");
+            for (let i = 0; i < maxPoseClasses; i++) {
+                poseLabelContainer.appendChild(document.createElement("div"));
+            }
+        }
+
+        async function poseLoop() {
+            poseWebcam.update();
+            await predictPose();
+            window.requestAnimationFrame(poseLoop);
+        }
+
+        async function predictPose() {
+            const { pose, posenetOutput } = await poseModel.estimatePose(poseWebcam.canvas);
+            const prediction = await poseModel.predict(posenetOutput);
+
+            let bestClass = "";
+            let bestProb = 0;
+
+            for (let i = 0; i < maxPoseClasses; i++) {
+                const classPrediction =
+                    prediction[i].className + ": " + prediction[i].probability.toFixed(2);
+                poseLabelContainer.childNodes[i].innerText = classPrediction;
+
+                if (prediction[i].probability > bestProb) {
+                    bestProb = prediction[i].probability;
+                    bestClass = prediction[i].className;
+                }
+            }
+
+            moverCarrito(bestClass);
+            drawPose(pose);
+        }
+
+        function moverCarrito(clase) {
+            if (detenerCarro) return;
+
+            clase = clase.toLowerCase();
+            if (clase === "izquierda" && carPosition > 2) {
+                carPosition -= 2;
+            } else if (clase === "derecha" && carPosition < 98) {
+                carPosition += 2;
+            }
+
+            car.style.left = carPosition + "%";
+        }
+
+        function drawPose(pose) {
+            if (poseWebcam.canvas) {
+                poseCtx.drawImage(poseWebcam.canvas, 0, 0);
+                if (pose) {
+                    const minPartConfidence = 0.5;
+                    tmPose.drawKeypoints(pose.keypoints, minPartConfidence, poseCtx);
+                    tmPose.drawSkeleton(pose.keypoints, minPartConfidence, poseCtx);
+                }
+            }
+        }
+    </script>
+</body>
+</html>
+
+
+
+
+
+
+
+
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8" />
+    <title>Carrito con Poses + Imagen (Una cámara)</title>
+    <style>
+        body {
+            text-align: center;
+            font-family: Arial;
+            background: #f0f0f0;
+        }
+
+        canvas {
+            display: block;
+            margin: auto;
+        }
+
+        #car {
+            width: 100px;
+            height: 50px;
+            background: green;
+            position: absolute;
+            bottom: 100px;
+            left: 50%;
+            transform: translateX(-50%);
+            border-radius: 10px;
+            z-index: 10;
+            transition: background 0.3s ease;
+        }
+
+        #estado-carro {
+            font-size: 20px;
+            margin-top: 10px;
+        }
+
+        #label-container div {
+            font-size: 16px;
+        }
+    </style>
+</head>
+
+<body>
+    <h2>Controla el carrito con tu cuerpo 🏎️ y detenlo con una imagen 🖼️</h2>
+    <button onclick="init()">Comenzar</button>
+
+    <canvas id="canvas"></canvas>
+    <p></p>
+    <p></p>
+    <p></p>
+    <p></p>
+    <div id="car"></div>
+    <div id="estado-carro">Estado: 🟢 En movimiento</div>
+
+    <h3>Clases detectadas</h3>
+    <div id="label-container"></div>
+
+    <!-- TensorFlow y Teachable Machine -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@1.3.1/dist/tf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/pose@0.8/dist/teachablemachine-pose.min.js"></script>
+    <script
+        src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@latest/dist/teachablemachine-image.min.js"></script>
+
+    <script>
+        const poseURL = "./my-pose-model/";
+        const imageURL = "./tm-my-image-model2/";
+
+        let poseModel, imageModel, webcam, ctx;
+        let labelContainer;
+        let maxPoseClasses, maxImageClasses;
+
+        let car = document.getElementById("car");
+        let estadoCarroTexto = document.getElementById("estado-carro");
+        let carPosition = 50;
+        let detenerCarro = false;
+
+        async function init() {
+            // Cargar modelos
+            poseModel = await tmPose.load(poseURL + "model.json", poseURL + "metadata.json");
+            imageModel = await tmImage.load(imageURL + "model.json", imageURL + "metadata.json");
+
+            maxPoseClasses = poseModel.getTotalClasses();
+            maxImageClasses = imageModel.getTotalClasses();
+
+            // Configurar webcam
+            const size = 300;
+            webcam = new tmPose.Webcam(size, size, true);
+            await webcam.setup();
+            await webcam.play();
+            window.requestAnimationFrame(loop);
+
+            const canvas = document.getElementById("canvas");
+            canvas.width = size;
+            canvas.height = size;
+            ctx = canvas.getContext("2d");
+
+            // Contenedor para mostrar clases
+            labelContainer = document.getElementById("label-container");
+            for (let i = 0; i < maxPoseClasses + maxImageClasses; i++) {
+                labelContainer.appendChild(document.createElement("div"));
+            }
+        }
+
+        async function loop() {
+            webcam.update();
+            await predict();
+            window.requestAnimationFrame(loop);
+        }
+
+        async function predict() {
+            const video = webcam.canvas;
+
+            // POSE
+            const { pose, posenetOutput } = await poseModel.estimatePose(video);
+            const posePrediction = await poseModel.predict(posenetOutput);
+
+            // IMAGEN
+            const imagePrediction = await imageModel.predict(video);
+
+            // Mostrar resultados
+            for (let i = 0; i < maxPoseClasses; i++) {
+                const classPrediction = posePrediction[i].className + ": " + posePrediction[i].probability.toFixed(2);
+                labelContainer.childNodes[i].innerText = classPrediction;
+            }
+
+            for (let i = 0; i < maxImageClasses; i++) {
+                const classPrediction = imagePrediction[i].className + ": " + imagePrediction[i].probability.toFixed(2);
+                labelContainer.childNodes[i + maxPoseClasses].innerText = classPrediction;
+            }
+
+            // Lógica de movimiento
+            let bestPoseClass = "";
+            let bestPoseProb = 0;
+
+            for (let i = 0; i < maxPoseClasses; i++) {
+                if (posePrediction[i].probability > bestPoseProb) {
+                    bestPoseProb = posePrediction[i].probability;
+                    bestPoseClass = posePrediction[i].className.toLowerCase();
+                }
+            }
+
+            moverCarrito(bestPoseClass);
+
+            // Lógica de detención por imagen
+            for (let i = 0; i < maxImageClasses; i++) {
+                if (imagePrediction[i].className === "Detener" && imagePrediction[i].probability > 0.75) {
+                    detenerCarro = true;
+                    car.style.background = "red";
+                    estadoCarroTexto.innerText = "Estado: 🔴 Detenido por imagen";
+                } else if (imagePrediction[i].className === "Nada" && imagePrediction[i].probability > 0.75) {
+                    detenerCarro = false;
+                    car.style.background = "green";
+                    estadoCarroTexto.innerText = "Estado: 🟢 En movimiento";
+                }
+            }
+
+            drawPose(pose);
+        }
+
+        function moverCarrito(clase) {
+            if (detenerCarro) return;
+
+            if (clase === "izquierda" && carPosition > 2) {
+                carPosition -= 2;
+            } else if (clase === "derecha" && carPosition < 98) {
+                carPosition += 2;
+            }
+
+            car.style.left = carPosition + "%";
+        }
+
+        function drawPose(pose) {
+            if (webcam.canvas) {
+                ctx.drawImage(webcam.canvas, 0, 0);
+                if (pose) {
+                    const minPartConfidence = 0.5;
+                    tmPose.drawKeypoints(pose.keypoints, minPartConfidence, ctx);
+                    tmPose.drawSkeleton(pose.keypoints, minPartConfidence, ctx);
+                }
+            }
+        }
+    </script>
+</body>
+
+</html>
+
+
+
+
+
+
+
+Funcional
+
+
+
+
+
+
+
+
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8" />
+    <title>Carrito con Poses + Imagen (Una cámara)</title>
+    <style>
+        body {
+            text-align: center;
+            font-family: Arial;
+            background: #f0f0f0;
+        }
+
+        canvas {
+            display: block;
+            margin: auto;
+        }
+
+        #car {
+            width: 100px;
+            height: 50px;
+            background: green;
+            position: absolute;
+            bottom: 100px;
+            left: 50%;
+            transform: translateX(-50%);
+            border-radius: 10px;
+            z-index: 10;
+            transition: background 0.3s ease;
+        }
+
+        #estado-carro {
+            font-size: 20px;
+            margin-top: 10px;
+        }
+
+        #label-container div {
+            font-size: 16px;
+        }
+    </style>
+</head>
+
+<body>
+    <h2>Controla el carrito con tu cuerpo 🏎️ y detenlo con una imagen 🖼️</h2>
+    <button onclick="init()">Comenzar</button>
+
+    <canvas id="canvas"></canvas>
+    <div id="car"></div>
+    <div id="estado-carro">Estado: 🟢 En movimiento</div>
+
+    <h3>Clases detectadas</h3>
+    <div id="label-container"></div>
+
+    <!-- TensorFlow y Teachable Machine -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@1.3.1/dist/tf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/pose@0.8/dist/teachablemachine-pose.min.js"></script>
+    <script
+        src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@latest/dist/teachablemachine-image.min.js"></script>
+
+    <script>
+        const poseURL = "./my-pose-model/";
+        const imageURL = "./tm-my-image-model2/";
+
+        let poseModel, imageModel, webcam, ctx;
+        let labelContainer;
+        let maxPoseClasses, maxImageClasses;
+
+        let car = document.getElementById("car");
+        let estadoCarroTexto = document.getElementById("estado-carro");
+        let carPosition = 50;
+        let detenerCarro = false;
+
+        async function init() {
+            // Cargar modelos
+            poseModel = await tmPose.load(poseURL + "model.json", poseURL + "metadata.json");
+            imageModel = await tmImage.load(imageURL + "model.json", imageURL + "metadata.json");
+
+            maxPoseClasses = poseModel.getTotalClasses();
+            maxImageClasses = imageModel.getTotalClasses();
+
+            // Configurar webcam
+            const size = 300;
+            webcam = new tmPose.Webcam(size, size, true);
+            await webcam.setup();
+            await webcam.play();
+            window.requestAnimationFrame(loop);
+
+            const canvas = document.getElementById("canvas");
+            canvas.width = size;
+            canvas.height = size;
+            ctx = canvas.getContext("2d");
+
+            // Contenedor para mostrar clases
+            labelContainer = document.getElementById("label-container");
+            for (let i = 0; i < maxPoseClasses + maxImageClasses; i++) {
+                labelContainer.appendChild(document.createElement("div"));
+            }
+        }
+
+        async function loop() {
+            webcam.update();
+            await predict();
+            window.requestAnimationFrame(loop);
+        }
+
+        async function predict() {
+            const video = webcam.canvas;
+
+            // POSE
+            const { pose, posenetOutput } = await poseModel.estimatePose(video);
+            const posePrediction = await poseModel.predict(posenetOutput);
+
+            // IMAGEN
+            const imagePrediction = await imageModel.predict(video);
+
+            // Mostrar resultados
+            for (let i = 0; i < maxPoseClasses; i++) {
+                const classPrediction = posePrediction[i].className + ": " + posePrediction[i].probability.toFixed(2);
+                labelContainer.childNodes[i].innerText = classPrediction;
+            }
+
+            for (let i = 0; i < maxImageClasses; i++) {
+                const classPrediction = imagePrediction[i].className + ": " + imagePrediction[i].probability.toFixed(2);
+                labelContainer.childNodes[i + maxPoseClasses].innerText = classPrediction;
+            }
+
+            // Lógica de movimiento
+            let bestPoseClass = "";
+            let bestPoseProb = 0;
+
+            for (let i = 0; i < maxPoseClasses; i++) {
+                if (posePrediction[i].probability > bestPoseProb) {
+                    bestPoseProb = posePrediction[i].probability;
+                    bestPoseClass = posePrediction[i].className.toLowerCase();
+                }
+            }
+
+            moverCarrito(bestPoseClass);
+
+            // Lógica de detención por imagen
+            // Lógica de detención por imagen
+            for (let i = 0; i < maxImageClasses; i++) {
+                const clase = imagePrediction[i].className;
+                const prob = imagePrediction[i].probability;
+
+                if (clase === "Detener" && prob > 0.75) {
+                    detenerCarro = true;
+                    car.style.background = "red";
+                    estadoCarroTexto.innerText = "Estado: 🔴 Detenido por imagen";
+                } else if (clase === "Avanzar" && prob > 0.75) {
+                    detenerCarro = false;
+                    car.style.background = "green";
+                    estadoCarroTexto.innerText = "Estado: 🟢 En movimiento";
+                }
+            }
+
+
+            drawPose(pose);
+        }
+
+        function moverCarrito(clase) {
+            if (detenerCarro) return;
+
+            if (clase === "izquierda" && carPosition > 2) {
+                carPosition -= 2;
+            } else if (clase === "derecha" && carPosition < 98) {
+                carPosition += 2;
+            }
+
+            car.style.left = carPosition + "%";
+        }
+
+        function drawPose(pose) {
+            if (webcam.canvas) {
+                ctx.drawImage(webcam.canvas, 0, 0);
+                if (pose) {
+                    const minPartConfidence = 0.5;
+                    tmPose.drawKeypoints(pose.keypoints, minPartConfidence, ctx);
+                    tmPose.drawSkeleton(pose.keypoints, minPartConfidence, ctx);
+                }
+            }
+        }
+    </script>
+</body>
+
+</html>

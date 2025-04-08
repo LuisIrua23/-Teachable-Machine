@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8" />
+    <title>Voz a Texto con TensorFlow.js</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@1.3.1/dist/tf.min.js"></script>
+    <script
+        src="https://cdn.jsdelivr.net/npm/@tensorflow-models/speech-commands@0.4.0/dist/speech-commands.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: #eef;
+            text-align: center;
+            padding: 50px;
+        }
+
+        #palabra {
+            margin-top: 40px;
+            font-size: 80px;
+            font-weight: bold;
+            color: white;
+            background: #999;
+            padding: 30px;
+            border-radius: 20px;
+            box-shadow: 0 0 20px rgba(0, 0, 0, 0.2);
+        }
+
+        button {
+            padding: 15px 30px;
+            font-size: 20px;
+            background: #007bff;
+            color: white;
+            border: none;
+            border-radius: 10px;
+            cursor: pointer;
+        }
+    </style>
+</head>
+
+<body>
+
+    <h1>🎤 Reconocimiento de voz con TensorFlow.js</h1>
+    <p>Di: <strong>Hola, Ayuda o Emergencia</strong></p>
+    <button onclick="iniciar()">🟢 Activar micrófono</button>
+
+    <div id="palabra">Esperando...</div>
+
+    <script>
+        const URL = "./tm-my-audio-model/";
+        let recognizer;
+
+        async function iniciar() {
+            try {
+                // Paso 1: Solicitar permiso de micrófono
+                await navigator.mediaDevices.getUserMedia({ audio: true });
+                console.log("🎤 Micrófono activado correctamente");
+
+                // Paso 2: Cargar el modelo
+                recognizer = speechCommands.create(
+                    "BROWSER_FFT",
+                    undefined,
+                    URL + "model.json",
+                    URL + "metadata.json"
+                );
+
+                await recognizer.ensureModelLoaded();
+                const labels = recognizer.wordLabels();
+                console.log("🧠 Clases del modelo:", labels);
+
+                // Paso 3: Escuchar en tiempo real
+                recognizer.listen(result => {
+                    let bestScore = 0;
+                    let bestClass = "";
+
+                    for (let i = 0; i < result.scores.length; i++) {
+                        if (result.scores[i] > bestScore) {
+                            bestScore = result.scores[i];
+                            bestClass = labels[i];
+                        }
+                    }
+
+                    if (bestScore > 0.75) {
+                        mostrarPalabra(bestClass);
+                    }
+                }, {
+                    probabilityThreshold: 0.5,
+                    overlapFactor: 0.5
+                });
+
+            } catch (error) {
+                alert("❌ No se pudo activar el micrófono. Asegúrate de permitirlo.");
+                console.error("Error al iniciar:", error);
+            }
+        }
+
+        function mostrarPalabra(palabra) {
+            const div = document.getElementById("palabra");
+            div.innerText = palabra.toUpperCase();
+
+            if (palabra === "Hola") {
+                div.style.background = "#2ecc71"; // verde
+            } else if (palabra === "Ayuda") {
+                div.style.background = "#f1c40f"; // amarillo
+            } else if (palabra === "Emergencia") {
+                div.style.background = "#e74c3c"; // rojo
+            } else {
+                div.style.background = "#999";
+            }
+        }
+    </script>
+
+</body>
+
+</html>

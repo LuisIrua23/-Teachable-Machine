@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8" />
+    <title>Carrito con Poses Avanzadas</title>
+    <link rel="stylesheet" href="/Estilos/estilos_pagina1.css">
+    
+</head>
+
+<body>
+    <h2>Controla el carrito con tu cuerpo 🏎️</h2>
+    <a href="inicio.html"><button>Inicio</button></a>
+    <button onclick="init()">Comenzar</button>
+    <!-- <button onclick="probarSalto()" style="background: #ff9900; color: white;">Probar salto</button>
+    <button onclick="probarFreno()" style="background: #ff5500; color: white;">Probar freno</button> -->
+
+    <div class="contenedor-flex">
+        <canvas id="canvas"></canvas>
+
+        <div class="info">
+            <div id="estado-carro">Estado: ⚪ Detenido</div>
+            <h3>Clases detectadas</h3>
+            <div id="label-container"></div>
+            <div id="debug-info">Esperando inicio...</div>
+            <br>
+        </div>
+    </div>
+    <br><br><br><br>
+    <div class="carretera" id="fondo-carretera">
+        <div class="carretera-fondo"></div>
+        <img id="car" src="/Imagenes/car.png" alt="carro" />
+    </div>
+
+    <!-- TensorFlow y Teachable Machine -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@1.3.1/dist/tf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/pose@0.8/dist/teachablemachine-pose.min.js"></script>
+
+    <script>
+        const URL = "./my-pose-model/";
+        let model, webcam, ctx, labelContainer, maxPredictions;
+                let car = document.getElementById("car");
+        let estadoCarroTexto = document.getElementById("estado-carro");
+        let debugInfo = document.getElementById("debug-info");
+        let carPosition = 50; // en porcentaje
+        let estaFrenando = false;
+        let estaSaltando = false;
+        let ultimaAccion = Date.now();
+        let mantenerFreno = false; // Nueva variable para mantener el freno
+        const tiempoEntreSaltos = 2000; // 2 segundos entre saltos
+        const tiempoFreno = 1500; // Tiempo que dura el freno si no se mantiene
+        
+        // Inicialmente pausar la carretera hasta iniciar
+        window.addEventListener('DOMContentLoaded', function() {
+            document.getElementById("fondo-carretera").classList.add("carretera-pausa");
+        });
+
+        // Función para probar el salto manualmente
+        function probarSalto() {
+            if (!estaSaltando && !estaFrenando) {
+                saltarCarro();
+                debugInfo.innerText = "Prueba manual de salto iniciada";
+            } else {
+                let razon = "";
+                if (estaSaltando) razon = "ya está saltando";
+                else if (estaFrenando) razon = "está frenando";
+                debugInfo.innerText = `No se puede saltar ahora (${razon})`;
+            }
+        }
+
+        // Función para probar el freno manualmente
+        function probarFreno() {
+            if (!estaFrenando && !estaSaltando) {
+                frenarCarro();
+                debugInfo.innerText = "Prueba manual de freno iniciada";
+            } else if (estaFrenando) {
+                // Si ya está frenando, mantener el freno activo
+                mantenerFreno = true;
+                debugInfo.innerText = "Manteniendo freno activo (manual)";
+            } else {
+                let razon = "";
+                if (estaSaltando) razon = "carro saltando";
+                debugInfo.innerText = `No se puede frenar ahora (${razon})`;
+            }
+        }
+
+        async function init() {
+            // Referencias a elementos
+            labelContainer = document.getElementById("label-container");
+            debugInfo = document.getElementById("debug-info");
+            
+            // Log de inicio
+            debugInfo.innerText = "Inicializando...";
+            
+            // Cambiar estado inicial
+            estadoCarroTexto.innerText = "Estado: 🟢 En movimiento";
+            
+            try {
+                // Iniciar animación de carretera
+                document.getElementById("fondo-carretera").classList.remove("carretera-pausa");
+                
+                // Cargar modelo
+                debugInfo.innerText = "Cargando modelo de poses...";
+                const modelURL = URL + "model.json";
+                const metadataURL = URL + "metadata.json";
+                
+                model = await tmPose.load(modelURL, metadataURL);
+                maxPredictions = model.getTotalClasses();
+                
+                debugInfo.innerText = `Modelo cargado. Poses: ${maxPredictions}`;
+
+                // Configurar webcam
+                const size = 300;
+                debugInfo.innerText = "Configurando webcam...";
+                webcam = new tmPose.Webcam(size, size, true);
+                await webcam.setup();
+                await webcam.play();
+                
+                const canvas = document.getElementById("canvas");
+                canvas.width = size;
+                canvas.height = size;
+                ctx = canvas.getContext("2d");
+
+                // Contenedor para mostrar clases
+                labelContainer.innerHTML = ""; // Limpiar contenedor
+                for (let i = 0; i < maxPredictions; i++) {
+                    labelContainer.appendChild(document.createElement("div"));
+                }
+                
+                // Todo listo
+                debugInfo.innerText = "¡Sistema listo! Esperando poses...";
+                
+                // Iniciar bucle
+                window.requestAnimationFrame(loop);
+            } catch (error) {
+                debugInfo.innerText = "Error al inicializar: " + error.message;
+                console.error("Error:", error);
+            }
+        }
+
+        async function loop() {
+            webcam.update();
+            await predict();
+            window.requestAnimationFrame(loop);
+        }
+
+        async function predict() {
+            try {
+                const { pose, posenetOutput } = await model.estimatePose(webcam.canvas);
+                const prediction = await model.predict(posenetOutput);
+
+                // Mostrar resultados
+                for (let i = 0; i < maxPredictions; i++) {
+                    const classPrediction = prediction[i].className + ": " + prediction[i].probability.toFixed(2);
+                    labelContainer.childNodes[i].innerText = classPrediction;
+                }
+
+                // Lógica de movimiento
+                let bestClass = "";
+                let bestProb = 0;
+                let frenarDetectado = false;
+
+                for (let i = 0; i < maxPredictions; i++) {
+                    if (prediction[i].probability > bestProb) {
+                        bestProb = prediction[i].probability;
+                        bestClass = prediction[i].className;
+                    }
+                    
+                    // Verificar específicamente si se mantiene el freno
+                    if (prediction[i].className === "Frenar" && prediction[i].probability > 0.7) {
+                        frenarDetectado = true;
+                    }
+                }
+
+                // Actualizar el estado de mantener freno
+                if (estaFrenando && frenarDetectado) {
+                    mantenerFreno = true;
+                    debugInfo.innerText = "Manteniendo freno activo - Pose detectada";
+                }
+
+                // Actualizar información de depuración
+                debugInfo.innerText = `Mejor pose: ${bestClass} (${bestProb.toFixed(2)})`;
+                
+                // Solo procesar si la probabilidad es alta
+                if (bestProb > 0.7) {
+                    procesarAccion(bestClass);
+                }
+
+                drawPose(pose);
+            } catch (error) {
+                debugInfo.innerText = "Error en predicción: " + error.message;
+                console.error("Error en predicción:", error);
+            }
+        }
+
+        function procesarAccion(clase) {
+            const ahora = Date.now();
+            
+            // Log para depuración
+            debugInfo.innerText = `Procesando acción: ${clase}`;
+            
+            // Manejar las diferentes poses
+            switch(clase) {
+                case "Izquierda":
+                    if (!estaFrenando && carPosition > 5) {
+                        carPosition -= 2;
+                        car.style.left = carPosition + "%";
+                        debugInfo.innerText += " - Moviendo izquierda";
+                    }
+                    break;
+                    
+                case "Derecha":
+                    if (!estaFrenando && carPosition < 95) {
+                        carPosition += 2;
+                        car.style.left = carPosition + "%";
+                        debugInfo.innerText += " - Moviendo derecha";
+                    }
+                    break;
+                    
+                case "Saltar":
+                    // Verificar si ha pasado suficiente tiempo desde el último salto
+                    if (!estaSaltando && !estaFrenando && ahora - ultimaAccion > tiempoEntreSaltos) {
+                        saltarCarro();
+                        ultimaAccion = ahora;
+                        debugInfo.innerText += " - ¡SALTANDO!";
+                    }
+                    break;
+                    
+                case "Frenar":
+                    // Verificar si ha pasado suficiente tiempo desde la última acción
+                    if (!estaFrenando && !estaSaltando && ahora - ultimaAccion > tiempoEntreSaltos) {
+                        frenarCarro();
+                        ultimaAccion = ahora;
+                        debugInfo.innerText += " - Frenando";
+                    }
+                    break;
+            }
+        }
+        
+        function saltarCarro() {
+            if (estaSaltando || estaFrenando) {
+                debugInfo.innerText = "No se puede saltar ahora: " + 
+                    (estaSaltando ? "ya está saltando" : 
+                     estaFrenando ? "está frenando" : "");
+                return;
+            }
+            
+            try {
+                // Actualizar estado
+                estaSaltando = true;
+                estadoCarroTexto.innerText = "Estado: 🔵 Saltando";
+                debugInfo.innerText = "SALTANDO: Iniciando animación CSS";
+                
+                // Aplicar animación de salto usando CSS
+                car.classList.add("saltando");
+                
+                // Remover la clase después de la animación
+                setTimeout(() => {
+                    car.classList.remove("saltando");
+                    estaSaltando = false;
+                    
+                    // Restaurar estado adecuado
+                    if (estaFrenando) {
+                        estadoCarroTexto.innerText = "Estado: 🟠 Frenando";
+                    } else {
+                        estadoCarroTexto.innerText = "Estado: 🟢 En movimiento";
+                    }
+                    
+                    debugInfo.innerText = "SALTO COMPLETADO";
+                }, 800); // Coincide con la duración de la animación
+                
+            } catch (error) {
+                debugInfo.innerText = "Error en salto: " + error.message;
+                console.error("Error en salto:", error);
+                estaSaltando = false;
+            }
+        }
+        
+        function frenarCarro() {
+            // Verificar si ya está frenando o saltando
+            if (estaFrenando || estaSaltando) {
+                // Si ya está frenando, actualizar para mantener el freno
+                if (estaFrenando) {
+                    mantenerFreno = true;
+                    debugInfo.innerText = "Manteniendo freno activo";
+                    return;
+                }
+                
+                debugInfo.innerText = "No se puede frenar ahora: " + 
+                    (estaSaltando ? "está saltando" : "");
+                return;
+            }
+            
+            // Actualizar estado
+            estaFrenando = true;
+            mantenerFreno = true; // Inicialmente mantener el freno
+            car.classList.add("frenando");
+            
+            // Detener completamente la carretera
+            document.getElementById("fondo-carretera").classList.add("carretera-pausa");
+            
+            estadoCarroTexto.innerText = "Estado: 🟠 Frenando";
+            debugInfo.innerText = "FRENANDO - Carretera detenida";
+            
+            // Programar la liberación del freno
+            establecerTemporizadorFreno();
+        }
+        
+        function establecerTemporizadorFreno() {
+            setTimeout(() => {
+                // Solo liberar el freno si no se debe mantener
+                if (!mantenerFreno) {
+                    liberarFreno();
+                } else {
+                    // Resetear el flag para la próxima verificación
+                    mantenerFreno = false;
+                    // Verificar nuevamente después de un breve periodo
+                    establecerTemporizadorFreno();
+                }
+            }, tiempoFreno);
+        }
+        
+        function liberarFreno() {
+            car.classList.remove("frenando");
+            document.getElementById("fondo-carretera").classList.remove("carretera-pausa");
+            estaFrenando = false;
+            
+            // Restaurar estado adecuado
+            if (estaSaltando) {
+                estadoCarroTexto.innerText = "Estado: 🔵 Saltando";
+            } else {
+                estadoCarroTexto.innerText = "Estado: 🟢 En movimiento";
+            }
+            
+            debugInfo.innerText = "Freno liberado - Carretera en movimiento";
+        }
+
+        function drawPose(pose) {
+            if (webcam.canvas) {
+                ctx.drawImage(webcam.canvas, 0, 0);
+                if (pose) {
+                    const minPartConfidence = 0.5;
+                    tmPose.drawKeypoints(pose.keypoints, minPartConfidence, ctx);
+                    tmPose.drawSkeleton(pose.keypoints, minPartConfidence, ctx);
+                }
+            }
+        }
+    </script>
+</body>
+
+</html>

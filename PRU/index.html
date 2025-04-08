@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8" />
+    <title>Carrito con Poses + Imagen (Una cámara)</title>
+    <link rel="stylesheet" href="/Estilos/estilos_pagina1.css">
+</head>
+
+<body>
+    <h2>Controla el carrito con tu cuerpo 🏎️ y detenlo con una imagen 🖼️</h2>
+    <a href="inicio.html"><button>Inicio</button></a>
+    <button onclick="init()">Comenzar</button>
+
+    <div class="contenedor-flex">
+        <canvas id="canvas"></canvas>
+        <!-- <div id="car"></div> -->
+
+
+        <div class="info">
+            <div id="estado-carro">Estado: 🟢 En movimiento</div>
+            <h3>Clases detectadas</h3>
+            <div id="label-container"></div>
+
+            <br>
+        </div>
+    </div>
+    <br><br><br><br>
+    <!-- parte dentro del <body> -->
+    <div class="carretera" id="fondo-carretera">
+        <img id="car" src="/Imagenes/car.png" alt="carro" />
+    </div>
+    <div class="carre">
+        <img src="/Imagenes/carre.jpg" alt="">
+    </div>
+
+    
+
+
+    <!-- TensorFlow y Teachable Machine -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@1.3.1/dist/tf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/pose@0.8/dist/teachablemachine-pose.min.js"></script>
+    <script
+        src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@latest/dist/teachablemachine-image.min.js"></script>
+
+    <script>
+        const poseURL = "./my-pose-model/";
+        const imageURL = "./tm-my-image-model2/";
+
+        let poseModel, imageModel, webcam, ctx;
+        let labelContainer;
+        let maxPoseClasses, maxImageClasses;
+
+        let car = document.getElementById("car");
+        let estadoCarroTexto = document.getElementById("estado-carro");
+        let carPosition = 10;
+        let detenerCarro = false;
+
+        async function init() {
+            // Cargar modelos
+            poseModel = await tmPose.load(poseURL + "model.json", poseURL + "metadata.json");
+            imageModel = await tmImage.load(imageURL + "model.json", imageURL + "metadata.json");
+
+            maxPoseClasses = poseModel.getTotalClasses();
+            maxImageClasses = imageModel.getTotalClasses();
+
+            // Configurar webcam
+            const size = 300;
+            webcam = new tmPose.Webcam(size, size, true);
+            await webcam.setup();
+            await webcam.play();
+            window.requestAnimationFrame(loop);
+
+            const canvas = document.getElementById("canvas");
+            canvas.width = size;
+            canvas.height = size;
+            ctx = canvas.getContext("2d");
+
+            // Contenedor para mostrar clases
+            labelContainer = document.getElementById("label-container");
+            for (let i = 0; i < maxPoseClasses + maxImageClasses; i++) {
+                labelContainer.appendChild(document.createElement("div"));
+            }
+        }
+
+        async function loop() {
+            webcam.update();
+            await predict();
+            window.requestAnimationFrame(loop);
+        }
+
+        async function predict() {
+            const video = webcam.canvas;
+
+            // POSE
+            const { pose, posenetOutput } = await poseModel.estimatePose(video);
+            const posePrediction = await poseModel.predict(posenetOutput);
+
+            // IMAGEN
+            const imagePrediction = await imageModel.predict(video);
+
+            // Mostrar resultados
+            for (let i = 0; i < maxPoseClasses; i++) {
+                const classPrediction = posePrediction[i].className + ": " + posePrediction[i].probability.toFixed(2);
+                labelContainer.childNodes[i].innerText = classPrediction;
+            }
+
+            for (let i = 0; i < maxImageClasses; i++) {
+                const classPrediction = imagePrediction[i].className + ": " + imagePrediction[i].probability.toFixed(2);
+                labelContainer.childNodes[i + maxPoseClasses].innerText = classPrediction;
+            }
+
+            // Lógica de movimiento
+            let bestPoseClass = "";
+            let bestPoseProb = 0;
+
+            for (let i = 0; i < maxPoseClasses; i++) {
+                if (posePrediction[i].probability > bestPoseProb) {
+                    bestPoseProb = posePrediction[i].probability;
+                    bestPoseClass = posePrediction[i].className.toLowerCase();
+                }
+            }
+
+            moverCarrito(bestPoseClass);
+
+            
+            // Lógica de detención por imagen
+            for (let i = 0; i < maxImageClasses; i++) {
+                const clase = imagePrediction[i].className;
+                const prob = imagePrediction[i].probability;
+
+                if (clase === "Detener" && prob > 0.75) {
+                    detenerCarro = true;
+                    car.style.background = "red";
+                    estadoCarroTexto.innerText = "Estado: 🔴 Detenido por imagen";
+                } else if (clase === "Avanzar" && prob > 0.75) {
+                    detenerCarro = false;
+                    car.style.background = "green";
+                    estadoCarroTexto.innerText = "Estado: 🟢 En movimiento";
+                }
+            }
+
+
+            drawPose(pose);
+            
+        }
+
+        function moverCarrito(clase) {
+            if (detenerCarro) return;
+
+            if (clase === "izquierda" && carPosition > 2) {
+                carPosition -= 2;
+            } else if (clase === "derecha" && carPosition < 98) {
+                carPosition += 2;
+            }
+
+            car.style.left = carPosition + "%";
+        }
+
+        function drawPose(pose) {
+            if (webcam.canvas) {
+                ctx.drawImage(webcam.canvas, 0, 0);
+                if (pose) {
+                    const minPartConfidence = 0.5;
+                    tmPose.drawKeypoints(pose.keypoints, minPartConfidence, ctx);
+                    tmPose.drawSkeleton(pose.keypoints, minPartConfidence, ctx);
+                }
+            }
+        }
+        
+
+    </script>
+</body>
+
+</html>

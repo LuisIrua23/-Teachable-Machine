@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8" />
+    <title>Carrito con Poses + Imagen (Una cámara)</title>
+    <link rel="stylesheet" href="/Estilos/estilos_pagina1.css">
+</head>
+
+<body>
+    <h2>Controla el carrito con tu cuerpo 🏎️</h2>
+    <a href="inicio.html"><button>Inicio</button></a>
+    <button onclick="init()">Comenzar</button>
+
+    <div class="contenedor-flex">
+        <canvas id="canvas"></canvas>
+        <!-- <div id="car"></div> -->
+
+
+        <div class="info">
+            <div id="estado-carro">Estado: 🟢 En movimiento</div>
+            <h3>Clases detectadas</h3>
+            <div id="label-container"></div>
+
+            <br>
+        </div>
+    </div>
+    <br><br><br><br>
+    <!-- parte dentro del <body> -->
+    <div class="carretera" id="fondo-carretera">
+        <img id="car" src="/Imagenes/car.png" alt="carro" />
+    </div>
+    <div class="carre">
+        <img src="/Imagenes/carre.jpg" alt="">
+    </div>
+
+    
+
+
+    <!-- TensorFlow y Teachable Machine -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@1.3.1/dist/tf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/pose@0.8/dist/teachablemachine-pose.min.js"></script>
+    <script
+        src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@latest/dist/teachablemachine-image.min.js"></script>
+
+        <script>
+            const URL = "./my-pose-model/";
+            let model, webcam, ctx, labelContainer, maxPredictions;
+            let car = document.getElementById("car");
+            let carPosition = 50; // en porcentaje
+    
+            async function init() {
+                const modelURL = URL + "model.json";
+                const metadataURL = URL + "metadata.json";
+    
+                model = await tmPose.load(modelURL, metadataURL);
+                maxPredictions = model.getTotalClasses();
+    
+                const size = 300;
+                webcam = new tmPose.Webcam(size, size, true);
+                await webcam.setup();
+                await webcam.play();
+                window.requestAnimationFrame(loop);
+    
+                const canvas = document.getElementById("canvas");
+                canvas.width = size; canvas.height = size;
+                ctx = canvas.getContext("2d");
+    
+                labelContainer = document.getElementById("label-container");
+                for (let i = 0; i < maxPredictions; i++) {
+                    labelContainer.appendChild(document.createElement("div"));
+                }
+            }
+    
+            async function loop(timestamp) {
+                webcam.update();
+                await predict();
+                window.requestAnimationFrame(loop);
+            }
+    
+            async function predict() {
+                const { pose, posenetOutput } = await model.estimatePose(webcam.canvas);
+                const prediction = await model.predict(posenetOutput);
+    
+                let bestClass = "";
+                let bestProb = 0;
+    
+                for (let i = 0; i < maxPredictions; i++) {
+                    const classPrediction =
+                        prediction[i].className + ": " + prediction[i].probability.toFixed(2);
+                    labelContainer.childNodes[i].innerHTML = classPrediction;
+    
+                    if (prediction[i].probability > bestProb) {
+                        bestProb = prediction[i].probability;
+                        bestClass = prediction[i].className;
+                    }
+                }
+    
+                moverCarrito(bestClass);
+                drawPose(pose);
+            }
+    
+            function moverCarrito(clase) {
+        if (clase === "Izquierda" && carPosition > 0) {
+        carPosition -= 2;
+        } else if (clase === "Derecha" && carPosition < 100) {
+        carPosition += 2;
+        }
+    
+    
+        car.style.left = carPosition + "%";
+    }
+    
+    
+    
+            function drawPose(pose) {
+                if (webcam.canvas) {
+                    ctx.drawImage(webcam.canvas, 0, 0);
+                    if (pose) {
+                        const minPartConfidence = 0.5;
+                        tmPose.drawKeypoints(pose.keypoints, minPartConfidence, ctx);
+                        tmPose.drawSkeleton(pose.keypoints, minPartConfidence, ctx);
+                    }
+                }
+            }
+        </script>
+</body>
+
+</html>
